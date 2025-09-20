@@ -12,7 +12,6 @@ const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const chatRoutes = require('./routes/chats');
 const messageRoutes = require('./routes/messages');
-const socketHandler = require('./socket/socketHandler');
 
 // Production logging configuration
 const isProduction = process.env.NODE_ENV === 'production';
@@ -95,7 +94,7 @@ app.use(helmet({
 
 // Rate limiting with environment-based configuration
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || (isProduction ? 100 : 1000),
   message: {
     error: 'Too many requests from this IP, please try again later.',
@@ -104,7 +103,6 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limiting for health checks
     return req.path === '/health' || req.path === '/api/health';
   }
 });
@@ -114,7 +112,6 @@ app.use('/api/', limiter);
 // CORS with production configuration
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, etc.)
     if (!origin) return callback(null, true);
     
     if (corsOrigins.includes(origin)) {
@@ -159,14 +156,15 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Root health check endpoint (for Render)
+// Root health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'Real-time Chat API Server',
-    version: '1.0.0',
+    message: 'Real-time Chat API Server with Supabase',
+    version: '2.0.0',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    database: 'Supabase PostgreSQL'
   });
 });
 
@@ -178,7 +176,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    database: 'Supabase PostgreSQL'
   });
 });
 
@@ -188,7 +187,8 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     message: 'API is healthy',
     timestamp: new Date().toISOString(),
-    version: '1.0.0'
+    version: '2.0.0',
+    database: 'Supabase PostgreSQL'
   });
 });
 
@@ -198,9 +198,151 @@ app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/messages', messageRoutes);
 
+// Supabase Real-time Socket.io Integration
+io.on('connection', (socket) => {
+  log.info('User connected:', socket.id);
+
+  // Join user to their personal room
+  socket.on('join_user', (userId) => {
+    socket.join(`user_${userId}`);
+    log.info(`User ${userId} joined personal room`);
+  });
+
+  // Join chat room
+  socket.on('join_chat', (chatId) => {
+    socket.join(`chat_${chatId}`);
+    log.info(`Socket ${socket.id} joined chat ${chatId}`);
+  });
+
+  // Leave chat room
+  socket.on('leave_chat', (chatId) => {
+    socket.leave(`chat_${chatId}`);
+    log.info(`Socket ${socket.id} left chat ${chatId}`);
+  });
+
+  // Handle new message
+  socket.on('send_message', async (data) => {
+    try {
+      const { chatId, senderId, content, messageType } = data;
+      
+      // Create message in Supabase
+      const { data: message, error } = await supabase
+        .from('messages')
+        .insert([{
+          chat_id: chatId,
+          sender_id: senderId,
+          content: content,
+          message_type: messageType || 'text'
+        }])
+        .select(`
+          *,
+          sender:users!sender_id(id, username, avatar)
+        `)
+        .single();
+
+      if (error) throw error;
+
+      // Update chat's last message
+      await supabase
+        .from('chats')
+        .update({
+          last_message: content,
+          last_message_time: message.created_at,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', chatId);
+
+      // Emit to chat room
+      io.to(`chat_${chatId}`).emit('new_message', message);
+      
+      log.info(`Message sent to chat ${chatId} by user ${senderId}`);
+    } catch (error) {
+      log.error('Error sending message:', error.message);
+      socket.emit('message_error', { error: error.message });
+    }
+  });
+
+  // Handle typing indicators
+  socket.on('typing_start', (data) => {
+    socket.to(`chat_${data.chatId}`).emit('user_typing', {
+      userId: data.userId,
+      username: data.username
+    });
+  });
+
+  socket.on('typing_stop', (data) => {
+    socket.to(`chat_${data.chatId}`).emit('user_stop_typing', {
+      userId: data.userId
+    });
+  });
+
+  // Handle user online status
+  socket.on('user_online', async (userId) => {
+    try {
+      await supabase
+        .from('users')
+        .update({
+          is_online: true,
+          last_seen: new Date().toISOString()
+        })
+        .eq('id', userId);
+
+      socket.broadcast.emit('user_status_change', {
+        userId: userId,
+        isOnline: true
+      });
+    } catch (error) {
+      log.error('Error updating online status:', error.message);
+    }
+  });
+
+  // Handle disconnect
+  socket.on('disconnect', async () => {
+    log.info('User disconnected:', socket.id);
+    
+    // Note: In a production app, you'd want to track which user this socket belongs to
+    // and update their online status accordingly
+  });
+});
+
+// Listen for Supabase real-time events
+const setupSupabaseRealtime = () => {
+  // Subscribe to message inserts
+  const messageSubscription = supabase
+    .channel('messages')
+    .on('postgres_changes', 
+      { event: 'INSERT', schema: 'public', table: 'messages' },
+      (payload) => {
+        log.info('New message from Supabase:', payload.new.id);
+        // Additional real-time logic can be added here
+      }
+    )
+    .subscribe();
+
+  // Subscribe to user status changes
+  const userSubscription = supabase
+    .channel('users')
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'users' },
+      (payload) => {
+        if (payload.new.is_online !== payload.old.is_online) {
+          io.emit('user_status_change', {
+            userId: payload.new.id,
+            isOnline: payload.new.is_online
+          });
+        }
+      }
+    )
+    .subscribe();
+
+  log.success('Supabase real-time subscriptions established');
+};
+
+// Initialize Supabase real-time
+setupSupabaseRealtime();
+
 // Enhanced error handling middleware
 app.use((err, req, res, next) => {
-  // Log error details
   log.error('Server error:', {
     message: err.message,
     stack: err.stack,
@@ -210,7 +352,6 @@ app.use((err, req, res, next) => {
     timestamp: new Date().toISOString()
   });
 
-  // CORS error
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({
       error: 'CORS policy violation',
@@ -218,7 +359,6 @@ app.use((err, req, res, next) => {
     });
   }
 
-  // JSON parsing error
   if (err.message === 'Invalid JSON') {
     return res.status(400).json({
       error: 'Invalid JSON',
@@ -226,7 +366,6 @@ app.use((err, req, res, next) => {
     });
   }
 
-  // Rate limiting error
   if (err.status === 429) {
     return res.status(429).json({
       error: 'Too Many Requests',
@@ -234,7 +373,6 @@ app.use((err, req, res, next) => {
     });
   }
 
-  // Default error response
   const statusCode = err.statusCode || err.status || 500;
   res.status(statusCode).json({
     error: 'Internal Server Error',
@@ -255,14 +393,6 @@ app.use('*', (req, res) => {
   });
 });
 
-// Socket.io connection handling with error handling
-try {
-  socketHandler(io);
-  log.success('Socket.io handlers initialized');
-} catch (error) {
-  log.error('Failed to initialize Socket.io handlers:', error.message);
-}
-
 // Use Render's PORT or fallback to 5000 for local development
 const PORT = process.env.PORT || 5000;
 
@@ -280,18 +410,15 @@ const gracefulShutdown = (signal) => {
     process.exit(0);
   });
   
-  // Force shutdown after 10 seconds
   setTimeout(() => {
     log.error('Forced shutdown after timeout');
     process.exit(1);
   }, 10000);
 };
 
-// Handle shutdown signals
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
   log.error('Uncaught Exception:', err);
   if (isProduction) {
@@ -299,7 +426,6 @@ process.on('uncaughtException', (err) => {
   }
 });
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   log.error('Unhandled Rejection at:', promise, 'reason:', reason);
   if (isProduction) {
@@ -307,22 +433,17 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-// Export app for Vercel
-module.exports = app;
-
-// Start server only if not in Vercel environment
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  server.listen(PORT, '0.0.0.0', () => {
-    log.success(`Server running on port ${PORT}`);
-    log.success('Socket.io server ready for connections');
-    log.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    log.info(`CORS Origins: ${corsOrigins.join(', ')}`);
-    log.info('Database: Supabase PostgreSQL');
-    
-    if (isProduction) {
-      log.info('Production mode: Enhanced security and logging enabled');
-      log.info(`Health check available at: /health`);
-      log.info(`API health check available at: /api/health`);
-    }
-  });
-}
+// Start server
+server.listen(PORT, '0.0.0.0', () => {
+  log.success(`Server running on port ${PORT}`);
+  log.success('Socket.io server ready for connections');
+  log.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  log.info(`CORS Origins: ${corsOrigins.join(', ')}`);
+  log.info('Database: Supabase PostgreSQL');
+  
+  if (isProduction) {
+    log.info('Production mode: Enhanced security and logging enabled');
+    log.info(`Health check available at: /health`);
+    log.info(`API health check available at: /api/health`);
+  }
+});
