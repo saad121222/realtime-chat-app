@@ -1,36 +1,20 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import PhoneAuth from './pages/PhoneAuth';
-import Chats from './pages/Chats';
-import { AuthProvider, useAuth } from './context/AuthContextEnhanced';
+import Login from './components/Auth/Login';
+import ChatApp from './components/Chat/ChatApp';
 
-function ProtectedRoute({ children }) {
-  const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) return <Navigate to="/phone-auth" replace />;
-  return children;
-}
-
-export default function App() {
+function App() {
   return (
-    <AuthProvider>
-      <Toaster position="top-right" />
-      <Routes>
-        <Route path="/phone-auth" element={<PhoneAuth />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Chats />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/phone-auth" replace />} />
-      </Routes>
-    </AuthProvider>
+    <Router>
+      <div className="App">
+        <Toaster position="top-right" />
+        <Routes>
+          <Route path="/" element={<Navigate to="/login" />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/chat" element={<ChatApp />} />
+        </Routes>
+      </div>
+    </Router>
   );
 }
