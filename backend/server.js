@@ -307,11 +307,11 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-// Export app for Vercel
-module.exports = app;
-
-// Start server only if not in Vercel environment
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+// For Vercel serverless deployment
+if (process.env.VERCEL) {
+  module.exports = app;
+} else {
+  // Start server for local development
   server.listen(PORT, '0.0.0.0', () => {
     log.success(`Server running on port ${PORT}`);
     log.success('Socket.io server ready for connections');
