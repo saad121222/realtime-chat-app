@@ -307,11 +307,11 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-// For Vercel serverless deployment
-if (process.env.VERCEL) {
-  module.exports = app;
-} else {
-  // Start server for local development
+// Export for serverless
+module.exports = app;
+
+// Start server only for local development
+if (!process.env.VERCEL && !process.env.LAMBDA_TASK_ROOT) {
   server.listen(PORT, '0.0.0.0', () => {
     log.success(`Server running on port ${PORT}`);
     log.success('Socket.io server ready for connections');
@@ -322,7 +322,7 @@ if (process.env.VERCEL) {
     if (isProduction) {
       log.info('Production mode: Enhanced security and logging enabled');
       log.info(`Health check available at: /health`);
-      log.info(`API health check available at: /api/health`);
     }
   });
 }
+log.info(`API health check available at: /api/health`);
