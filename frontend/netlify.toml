@@ -1,0 +1,91 @@
+[build]
+  publish = "build"
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NPM_VERSION = "9"
+
+[[redirects]]
+  from = "/sw.js"
+  to = "/sw.js"
+  status = 200
+  headers = {Cache-Control = "public, max-age=0, must-revalidate", Service-Worker-Allowed = "/"}
+
+[[redirects]]
+  from = "/service-worker.js"
+  to = "/service-worker.js"
+  status = 200
+  headers = {Cache-Control = "public, max-age=0, must-revalidate", Service-Worker-Allowed = "/"}
+
+[[redirects]]
+  from = "/manifest.json"
+  to = "/manifest.json"
+  status = 200
+  headers = {Content-Type = "application/manifest+json", Cache-Control = "public, max-age=31536000, immutable"}
+
+[[redirects]]
+  from = "/static/*"
+  to = "/static/:splat"
+  status = 200
+  headers = {Cache-Control = "public, max-age=31536000, immutable"}
+
+[[redirects]]
+  from = "/icons/*"
+  to = "/icons/:splat"
+  status = 200
+  headers = {Cache-Control = "public, max-age=31536000, immutable"}
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/service-worker.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[context.production.environment]
+  REACT_APP_API_URL = "https://whatsapp-clone-backend.onrender.com"
+  REACT_APP_SOCKET_URL = "https://whatsapp-clone-backend.onrender.com"
+  REACT_APP_CDN_URL = "https://cdn.whatsapp-clone.com"
+  REACT_APP_ENVIRONMENT = "production"
+
+[context.staging.environment]
+  REACT_APP_API_URL = "https://whatsapp-clone-backend-staging.onrender.com"
+  REACT_APP_SOCKET_URL = "https://whatsapp-clone-backend-staging.onrender.com"
+  REACT_APP_CDN_URL = "https://cdn-staging.whatsapp-clone.com"
+  REACT_APP_ENVIRONMENT = "staging"
+
+[context.deploy-preview.environment]
+  REACT_APP_API_URL = "https://whatsapp-clone-backend-staging.onrender.com"
+  REACT_APP_SOCKET_URL = "https://whatsapp-clone-backend-staging.onrender.com"
+  REACT_APP_CDN_URL = "https://cdn-staging.whatsapp-clone.com"
+  REACT_APP_ENVIRONMENT = "preview"
